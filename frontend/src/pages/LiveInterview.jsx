@@ -619,7 +619,7 @@ export default function LiveInterview() {
        apiClient.analyzeAudioAuthenticity(audioBlob)
          .then(res => {
             if (res && res.is_synthetic) {
-               recordIntegritySignal('voice_authenticity_failed', { note: 'Synthetic voice detected by Hive/Resemble AI.' });
+               recordIntegritySignal('voice_authenticity_failed', { note: 'Synthetic voice detected by Resemble AI.' });
                // We could also terminate, but for now we just log it heavily per requirements
             }
          })
