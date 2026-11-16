@@ -26,9 +26,9 @@ logger = logging.getLogger("AIOrchestrator")
 
 # ── Model Configuration ────────────────────────────────────────────────────
 
-GEMINI_MODEL  = "gemini-2.0-flash"
-GROQ_MODEL    = "llama-3.3-70b-versatile"   # Free tier: 6000 RPD
-DEEPSEEK_MODEL = "deepseek-chat"             # ~$0.001/1k tokens
+GEMINI_MODEL  = "gemini-3.5-flash-lite"
+GROQ_MODEL    = "qwen/qwen3.8-27b"           # Ultra-fast open-weight reasoning model on Groq
+DEEPSEEK_MODEL = "deepseek-chat"             # ~$0.001/1k tokens (optional fallback)
 
 # ── Lazy SDK imports (no crash if not installed) ───────────────────────────
 
@@ -99,18 +99,20 @@ async def _call_groq_raw(prompt: str, temperature: float = 0.65, max_tokens: int
     key = os.getenv("GROQ_API_KEY", "")
     if not key:
         raise RuntimeError("GROQ_API_KEY not configured")
-    client = AsyncGroq(api_key=key)
-    response = await client.chat.completions.create(
-        model=GROQ_MODEL,
-        messages=[
-            {"role": "system", "content": "You are an expert AI interview evaluation engine. Always respond with valid JSON only."},
-            {"role": "user",   "content": prompt},
-        ],
-        temperature=temperature,
-        max_tokens=max_tokens,
-        response_format={"type": "json_object"},
-    )
-    return response.choices[0].message.content or ""
+    import httpx
+    async with httpx.AsyncClient() as http_client:
+        client = AsyncGroq(api_key=key, http_client=http_client)
+        response = await client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": "You are an expert AI interview evaluation engine. Always respond with valid JSON only."},
+                {"role": "user",   "content": prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"},
+        )
+        return response.choices[0].message.content or ""
 
 
 # ── DeepSeek driver ────────────────────────────────────────────────────────
@@ -187,21 +189,21 @@ async def orchestrate(
 
 def _build_priority(task: str, preferred: Optional[str]) -> list[str]:
     """Build the model priority list based on task type and availability."""
-    if preferred:
-        return [preferred, "gemini", "groq", "deepseek"]
+    has_deepseek = bool(os.getenv("DEEPSEEK_API_KEY", "").strip())
     
-    # Task-specific routing
-    if task in ("assessment", "report"):
-        # Groq is much faster and avoids the current Gemini rate limits
-        return ["groq", "gemini", "deepseek"]
-    elif task == "question":
-        # Groq is fastest for question generation
-        return ["groq", "gemini", "deepseek"]
+    if preferred:
+        chain = [preferred, "gemini", "groq"]
+    elif task in ("assessment", "report", "question"):
+        chain = ["groq", "gemini"]
     elif task == "coding":
-        # DeepSeek is best for code evaluation
-        return ["deepseek", "groq", "gemini"]
+        # Gemini 2.0 Flash is outstanding at code evaluation; Groq provides ultra-fast second opinion
+        chain = ["gemini", "groq"]
     else:
-        return ["gemini", "groq", "deepseek"]
+        chain = ["gemini", "groq"]
+
+    if has_deepseek:
+        chain.append("deepseek")
+    return chain
 
 
 def _get_driver(model: str):
